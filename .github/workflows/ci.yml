@@ -59,3 +59,21 @@ jobs:
       # tests/test_adk_extra_installed.py fails (not skips) under CI=true if the adk extra is
       # missing, so this can never quietly regress to a green check over skipped tests.
       - run: pytest
+
+  receipts:
+    name: Signed decision receipts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+        working-directory: js
+      - run: pip install -r requirements-receipts-test.txt
+      # Generates test-vectors/ (not committed), compiles js/src/receipts.ts,
+      # then runs the Node and Python receipt suites against those fixtures.
+      - run: python tools/run_receipt_tests.py

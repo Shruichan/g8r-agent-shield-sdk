@@ -37,7 +37,7 @@ const result = await shield.wrap(
 );
 ```
 
-> **`ShieldConfig` fields.** `tenantId` is the **only hard-required** identity field. `pepUrl` is **required-in-effect** (`G8R_PEP_URL`); wrap() hops `POST {pepUrl}/decide` with **no** `consoleUrl` fallback and loopback refused. `consoleUrl` / `apiKey` are required-in-effect for audit `/log` and the `check()` gap (`G8R_CONSOLE_URL` / `G8R_API_KEY`). The constructor **throws** rather than defaulting to localhost. The credential can alternatively come from a [`credentialProvider`](#authenticating-with-short-lived-credentials-credentialprovider) — mutually exclusive with `apiKey`. Everything else is **optional with a default**: `department` (`"General"`), `userId` (`"unknown"`), `aiModel` (`"unknown"`), `agentId` (`"sdk-client"`), `employeeName` (falls back to `userId` in the audit log), `timeout` (`10` seconds), and `blockOnEscalated` (`false`). `sessionId` is optional with **no** default.
+> **`ShieldConfig` fields.** `tenantId` is the **only hard-required** identity field. `pepUrl` is **required-in-effect** (`G8R_PEP_URL`); wrap() hops `POST {pepUrl}/decide` with **no** `consoleUrl` fallback and loopback refused. `consoleUrl` / `apiKey` are required-in-effect for audit `/log` and the `check()` gap (`G8R_CONSOLE_URL` / `G8R_API_KEY`). The constructor **throws** rather than defaulting to localhost. The credential can alternatively come from a [`credentialProvider`](#authenticating-with-short-lived-credentials-credentialprovider) — mutually exclusive with `apiKey`. Everything else is **optional with a default**: `department` (`"General"`), `userId` (`"unknown"`), `aiModel` (`"unknown"`), `agentId` (`"sdk-client"`), `employeeName` (falls back to `userId` in the audit log), `timeout` (`10` seconds), and `blockOnEscalated` (`false`). `sessionId` is optional with **no** default. `receiptVerification` is optional and **unset by default** (unsigned). See [Signed decision receipts](#signed-decision-receipts-receiptverification).
 
 ```typescript
 // Minimal — consoleUrl + apiKey from env, everything else defaulted:
@@ -46,9 +46,40 @@ const result = await shield.wrap(
 const shield = new AgentShield({ tenantId: tenantId('acme-corp') });
 ```
 
+### Signed decision receipts (`receiptVerification`)
+
+Unsigned is the default. `wrap()` still POSTs `{pepUrl}/decide`. `check()` still POSTs Console `/api/sdk/v1/check`.
+
+Pass `receiptVerification` to require a signed receipt on **both** hops. There is no unsigned fallback and no hop substitution. Both `pepUrl` and `consoleUrl` must be HTTPS without credentials, query, or fragment. Loopback is still refused.
+
+In this mode `wrap()` runs the factory only for a signed `allowed` decision. A signed `escalated` decision is not executable, even when `blockOnEscalated` is `false`. `check()` still returns a verified deny instead of throwing. A missing or invalid receipt raises `ReceiptVerificationError`.
+
+```typescript
+import { AgentShield, tenantId } from '@g8r-security/agent-shield-sdk';
+import type { ReceiptVerificationConfig } from '@g8r-security/agent-shield-sdk';
+
+const receiptVerification: ReceiptVerificationConfig = {
+  issuer: 'https://pep.yourcompany.com',
+  audience: 'g8r-sdk',
+  publicKeys: {
+    'key-1': process.env.G8R_RECEIPT_PUBLIC_KEY_PEM!,
+  },
+};
+
+const shield = new AgentShield({
+  tenantId: tenantId('acme-corp'),
+  pepUrl: 'https://pep.yourcompany.com',
+  consoleUrl: 'https://shield.yourcompany.com',
+  apiKey: process.env.G8R_API_KEY,
+  receiptVerification,
+});
+```
+
+Trusted keys are Ed25519 public keys in SPKI PEM form, indexed by key id. The protocol is in [signed-decision-receipts-v1.md](../docs/signed-decision-receipts-v1.md).
+
 ### Authenticating with short-lived credentials (`credentialProvider`)
 
-The Console accepts either the deployment **shared secret** or a **verified OIDC JWT** (workload identity — e.g. AWS) in the same `Authorization: Bearer` header. For JWTs — which expire — pass a `credentialProvider` instead of a static `apiKey`. The provider is awaited **fresh on every `/check` and `/log` request**, so a rotated token is always picked up:
+The Console accepts either the deployment **shared secret** or a **verified OIDC JWT** (workload identity — e.g. AWS) in the same `Authorization: Bearer` header. For JWTs — which expire — pass a `credentialProvider` instead of a static `apiKey`. The provider is awaited **fresh on every `/decide`, `/check`, and `/log` request**, so a rotated token is always picked up:
 
 ```typescript
 const shield = new AgentShield({
@@ -99,11 +130,11 @@ An admin-**denied** agent returns `blocked` with `requiresApproval: false` in bo
 The primary integration point. Runs the full pipeline:
 
 1. **Redact** — `redactSensitiveData(prompt)` strips secrets locally
-2. **Check** — POST redacted prompt to `/api/sdk/v1/check` (policy evaluation)
-3. **Log** — POST audit entry to `/api/sdk/v1/log`
+2. **Decide** — POST redacted prompt to `{pepUrl}/decide` (one PEP policy hop)
+3. **Log** — POST audit entry to Console `/api/sdk/v1/log`
 4. **Invoke** — call `factory()` only if decision is `allowed`, or `escalated` while `blockOnEscalated` is `false`
 
-If blocked, throws `ShieldBlockedError` — the factory is **never called**. If `escalated` and the shield was constructed with `blockOnEscalated: true`, it also throws `ShieldBlockedError`; otherwise an escalated action proceeds with a warning (pending out-of-band human review). Internally `wrap()` runs the `/check` evaluation and then a single `/log`, both under one `requestId` and one resolved [lineage](#sub-agent-lineage), so `/check` and `/log` correlate under a single id with no duplicate audit entry. When allowed (or escalated-and-proceeding), the factory runs inside an ambient scope so nested `wrap()` calls inherit the session and parent-agent chain automatically.
+If blocked, throws `ShieldBlockedError` — the factory is **never called**. If `escalated` and the shield was constructed with `blockOnEscalated: true`, it also throws `ShieldBlockedError`; otherwise an escalated action proceeds with a warning (pending out-of-band human review). When `receiptVerification` is set, a signed `escalated` decision is never executable. Internally `wrap()` runs PEP `/decide` and then a single `/log`, both under one `requestId` and one resolved [lineage](#sub-agent-lineage), so the policy hop and the audit line correlate under a single id. `wrap()` never POSTs Console `/api/sdk/v1/check`. That remaining hop is `check()` only. When allowed (or escalated-and-proceeding), the factory runs inside an ambient scope so nested `wrap()` calls inherit the session and parent-agent chain automatically.
 
 ```typescript
 try {
@@ -161,7 +192,7 @@ const { redacted, tokensReplaced } = redactSensitiveData(input);
 
 ## Sub-agent lineage
 
-When an agent governed by the SDK spawns **sub-agents** that are themselves governed, each hop should be evaluated with awareness of the run it belongs to and the agents that led to it. The SDK propagates that **lineage automatically** through nested `wrap()` calls — no manual instrumentation at each call site — by adding two optional, additive fields to the `/check` and `/log` wire payloads:
+When an agent governed by the SDK spawns **sub-agents** that are themselves governed, each hop should be evaluated with awareness of the run it belongs to and the agents that led to it. The SDK propagates that **lineage automatically** through nested `wrap()` calls — no manual instrumentation at each call site — by adding two optional, additive fields to the policy hop (`{pepUrl}/decide` for `wrap()`, Console `/api/sdk/v1/check` for `check()`) and `/log` wire payloads:
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -174,7 +205,7 @@ When an agent governed by the SDK spawns **sub-agents** that are themselves gove
 
 1. Resolves the **session** — the ambient session in scope, else this instance's configured `sessionId`, else a freshly minted one (`crypto.randomUUID`). A top-level call therefore mints a fresh session; a nested call inherits its parent's.
 2. Resolves the **parent chain** — the ancestor chain in scope (empty at the top).
-3. Sends both on `/check` and `/log`.
+3. Sends both on the policy hop (`{pepUrl}/decide` for `wrap()`, Console `/check` for `check()`) and on `/log`.
 4. Runs the factory **inside an extended scope** whose chain now ends with this agent, so any `wrap()` the factory makes — directly or in an awaited continuation — inherits the same session and the extended chain. The prior context auto-restores when the call returns, including on a block/throw.
 
 ```typescript
@@ -260,6 +291,7 @@ interface PolicyCheckResult {
   complianceMappings: ComplianceMapping[];
   sessionRevoked?: boolean;
   redactedTokens?: string[];  // Tokens stripped by VPC masking layer
+  decisionReceipt?: string;   // Verified compact JWS when receiptVerification is set
 }
 ```
 

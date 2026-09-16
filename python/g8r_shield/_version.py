@@ -23,7 +23,7 @@ from importlib.metadata import version as _pkg_version
 
 # Keep in sync with `version` in pyproject.toml. This is the canonical
 # synchronized parity release shared with the TypeScript SDK.
-_FALLBACK_VERSION = "0.5.2"
+_FALLBACK_VERSION = "0.6.0"
 
 try:
     __version__: str = _pkg_version("g8r-shield")

@@ -7,7 +7,7 @@
  * point of a canonical surface.
  *
  * This test pins the TypeScript side of the contract:
- *   1. The exported VERSION matches package.json AND the canonical 0.5.2.
+ *   1. The exported VERSION matches package.json AND the canonical 0.6.0.
  *   2. The User-Agent identifies the TS SDK + version (mirror of
  *      Python's `g8r-shield-python/{version}`).
  *   3. The /check and /log wire payloads carry EXACTLY the canonical field set
@@ -27,7 +27,7 @@ import { join } from 'node:path';
 import { AgentShield, VERSION } from '../src/index';
 import { tenantId } from '../src/ids';
 
-const CANONICAL_VERSION = '0.5.2';
+const CANONICAL_VERSION = '0.6.0';
 
 // The exact governance field set the /check payload must carry (order-independent).
 const CANONICAL_CHECK_FIELDS = [
@@ -84,7 +84,7 @@ describe('canonical parity', () => {
     jest.restoreAllMocks();
   });
 
-  it('exports VERSION equal to the canonical 0.5.2', () => {
+  it('exports VERSION equal to the canonical 0.6.0', () => {
     expect(VERSION).toBe(CANONICAL_VERSION);
   });
 
@@ -222,6 +222,14 @@ describe('canonical parity', () => {
     const hopHeaders = (global.fetch as jest.Mock).mock.calls[0][1].headers;
     const logBody = JSON.parse((global.fetch as jest.Mock).mock.calls[1][1].body);
     expect(hopHeaders['X-GF-Agent-ID']).toBe('my-agent');
+    expect(hopHeaders['x-gf-department']).toBe('General');
     expect(logBody.agentId).toBe('my-agent');
+    expect(logBody.department).toBe('General');
+    // PEP Actor has no user header. x-gf-model-id is an upstream RESPONSE
+    // header. User and model stay on Console /log only.
+    expect(hopHeaders['x-gf-user-id']).toBeUndefined();
+    expect(hopHeaders['x-gf-model-id']).toBeUndefined();
+    expect(logBody.userId).toBe('unknown');
+    expect(logBody.aiModel).toBe('unknown');
   });
 });

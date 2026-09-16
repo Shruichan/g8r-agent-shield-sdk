@@ -12,10 +12,18 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from g8r_shield import (
-    AgentShield, ReceiptVerificationConfig, ReceiptVerificationError, ShieldBlockedError,
+    AgentShield,
+    ReceiptVerificationConfig,
+    ReceiptVerificationError,
+    ShieldBlockedError,
 )
 from g8r_shield.receipts import (
-    ALGORITHM, RECEIPT_TYPE, base64url, build_receipt_request, canonical_json, request_hash,
+    ALGORITHM,
+    RECEIPT_TYPE,
+    base64url,
+    build_receipt_request,
+    canonical_json,
+    request_hash,
 )
 
 KEY = Ed25519PrivateKey.generate()
@@ -61,7 +69,8 @@ def install_transport(monkeypatch, make):
             )
             seen.append(copy.deepcopy(request))
             value = make(request, len(seen))
-        response = requests.Response(); response.status_code = 200
+        response = requests.Response()
+        response.status_code = 200
         response._content = canonical_json(value)
         return response
 
@@ -155,7 +164,8 @@ def test_legacy_mode_still_unsigned_and_advisory(monkeypatch):
         seen.append(headers)
         value = (dict(decision=dict(outcome="REQUIRE_APPROVAL", explanation="legacy advisory"))
                  if url.endswith("/decide") else dict(id="log", decision="allowed", timestamp="test"))
-        response = requests.Response(); response.status_code = 200
+        response = requests.Response()
+        response.status_code = 200
         response._content = canonical_json(value)
         return response
 

@@ -2,6 +2,7 @@ import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { AgentShield, ShieldBlockedError, tenantId } from '../src/index';
 import {
   ReceiptVerificationError,
+  ReceiptVerifier,
   buildReceiptRequest,
   canonicalJson,
   receiptRequestHash,
@@ -87,8 +88,8 @@ afterEach(() => jest.restoreAllMocks());
 
 test('signed allow executes callback', async () => {
   installTransport('allowed');
-  const callback = jest.fn(async () => 'done');
-  await expect(new AgentShield(config).wrap(callback, 'demo:allow')).resolves.toBe('done');
+  const callback = jest.fn(async () => 'ok');
+  await expect(new AgentShield(config).wrap(callback, 'demo:allow')).resolves.toBe('ok');
   expect(callback).toHaveBeenCalledTimes(1);
 });
 
@@ -102,8 +103,38 @@ test.each(['blocked', 'escalated'] as const)('signed %s never executes callback'
 test('missing receipt fails closed', async () => {
   installTransport('allowed', true);
   const callback = jest.fn(async () => 'must-not-run');
-  await expect(new AgentShield(config).wrap(callback, 'demo')).rejects.toBeInstanceOf(ReceiptVerificationError);
+  const err: unknown = await new AgentShield(config).wrap(callback, 'demo').then(
+    () => {
+      throw new Error('expected ReceiptVerificationError');
+    },
+    (caught: unknown) => caught,
+  );
+  expect(err).toBeInstanceOf(ReceiptVerificationError);
+  expect(err).toHaveProperty('message', 'Signed decision receipt is required');
   expect(callback).not.toHaveBeenCalled();
+});
+
+test('undici Response.json() is accepted as a receipt envelope', async () => {
+  const parsed: unknown = await new Response(JSON.stringify({ decision: 'allowed' })).json();
+  const request = buildReceiptRequest({
+    endpoint: '/decide',
+    tenantId: config.tenantId,
+    agentId: config.agentId,
+    requestId: 'req-1',
+    headers: { 'x-gf-tenant-id': config.tenantId, 'x-gf-agent-id': config.agentId },
+    body: {
+      correlation_id: 'req-1',
+      downstream_url: 'sdk://wrap',
+      method: 'POST',
+      action_hint: 'llm_prompt',
+      target_hint: 'llm_prompt',
+      body: { prompt: 'x' },
+      action_type: 'tool_call',
+    },
+  });
+  expect(() => new ReceiptVerifier(verification).verifyResponse(parsed, request)).toThrow(
+    'Signed decision receipt is required',
+  );
 });
 
 test('signed mode requires HTTPS', () => {

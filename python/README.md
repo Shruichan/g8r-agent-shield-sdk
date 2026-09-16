@@ -10,6 +10,12 @@ Mirrors the TypeScript SDK [`@g8r-security/agent-shield-sdk`](https://www.npmjs.
 pip install g8r-shield
 ```
 
+For signed decision receipts (Ed25519 verification):
+
+```bash
+pip install "g8r-shield[receipts]"
+```
+
 For the Bedrock example:
 
 ```bash
@@ -92,8 +98,35 @@ The factory pattern (`lambda: ...` or any zero-argument callable) ensures the LL
 | `session_id`         | `str \| None`   | No       | `None`                                      | Per-instance default governance session grouping this instance's calls into one run. Overridden by an enclosing `run()` scope or a propagated nested context. See [Sub-agent lineage](#sub-agent-lineage) |
 | `timeout`            | `float`         | No       | `10.0`                                      | HTTP request timeout in seconds          |
 | `block_on_escalated` | `bool`          | No       | `False`                                     | When `True`, `wrap()` raises `ShieldBlockedError` on escalated decisions instead of proceeding with a warning (fail-closed) |
+| `receipt_verification` | `ReceiptVerificationConfig \| None` | No | `None` | When set, `wrap()` and `check()` require a signed receipt on `/decide` and `/api/sdk/v1/check`. HTTPS is required on both URLs. Escalated is not executable. Unsigned is the default. See [Signed decision receipts](#signed-decision-receipts-receipt_verification). |
 
 \* `console_url` and `api_key` may be supplied either as keyword arguments or via the `G8R_CONSOLE_URL` / `G8R_API_KEY` environment variables. If neither source provides a value, the constructor raises `ValueError`.
+
+### Signed decision receipts (`receipt_verification`)
+
+Unsigned is the default. `wrap()` still POSTs `{pep_url}/decide`. `check()` still POSTs Console `/api/sdk/v1/check`.
+
+Pass `receipt_verification` to require a signed receipt on **both** hops. There is no unsigned fallback and no hop substitution. Both `pep_url` and `console_url` must be HTTPS without credentials, query, or fragment. Loopback is still refused.
+
+In this mode `wrap()` runs the factory only for a signed `allowed` decision. A signed `escalated` decision is not executable, even when `block_on_escalated` is `False`. `check()` still returns a verified deny instead of raising. A missing or invalid receipt raises `ReceiptVerificationError`.
+
+```python
+from g8r_shield import AgentShield, ReceiptVerificationConfig
+
+shield = AgentShield(
+    tenant_id="acme-corp",
+    pep_url="https://pep.yourcompany.com",
+    console_url="https://shield.yourcompany.com",
+    api_key="sk-shield-...",
+    receipt_verification=ReceiptVerificationConfig(
+        issuer="https://pep.yourcompany.com",
+        audience="g8r-sdk",
+        public_keys={"key-1": pem},
+    ),
+)
+```
+
+Install `g8r-shield[receipts]` so the `cryptography` extra is present. Trusted keys are Ed25519 public keys in SPKI PEM form, indexed by key id. The protocol is in [signed-decision-receipts-v1.md](../docs/signed-decision-receipts-v1.md).
 
 ### `shield.check(prompt: str) -> PolicyDecision`
 
@@ -106,7 +139,7 @@ Evaluate a prompt and conditionally execute the LLM call. The interaction is log
 - `factory` — Zero-argument callable that creates the LLM call. Only invoked when the policy decision is `allowed` or `escalated`.
 - `prompt` — The text to evaluate.
 - Raises `ShieldBlockedError` when the policy decision is `blocked`.
-- Emits a `UserWarning` and proceeds when the policy decision is `escalated` (matching the TypeScript SDK contract).
+- Emits a structured `action_escalated` log line and proceeds when the policy decision is `escalated` (matching the TypeScript SDK contract). When `receipt_verification` is set, a signed `escalated` decision is never executable.
 - Propagates governance lineage automatically — see [Sub-agent lineage](#sub-agent-lineage).
 
 ### `shield.run(session_id: str | None = None)`
@@ -128,6 +161,7 @@ Context manager that manually appends `agent_id` as a parent hop for its block �
 | `session_revoked`     | `bool`                     | Whether the agent session was revoked                |
 | `compliance_mappings` | `list[ComplianceMapping]`  | Regulatory controls implicated by the decision       |
 | `redacted_tokens`     | `list[str]`                | Sensitive tokens stripped from the prompt by the local-first redaction layer before it reached the gateway; empty when the prompt was clean |
+| `decision_receipt`    | `str \| None`              | Verified compact JWS when `receipt_verification` is set. `None` in unsigned mode. |
 | `is_pending_registration` | `bool` (read-only property) | `True` only when `decision == "blocked"` and `requires_approval` — the v2 signal that the agent's registration is awaiting admin approval. See [Agent registration](#agent-registration-trust-on-first-use) |
 
 ### `ShieldBlockedError`

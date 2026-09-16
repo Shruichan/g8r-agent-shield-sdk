@@ -35,8 +35,9 @@ function fail(message: string): never {
 
 function object(value: unknown, fields?: readonly string[]): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) fail('Expected object');
+  // Jest undici JSON is a cross-realm plain object, not this Object.prototype.
   const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) fail('Expected plain JSON object');
+  if (prototype !== null && Object.getPrototypeOf(prototype) !== null) fail('Expected object');
   if (Object.getOwnPropertySymbols(value).length) fail('Symbol keys are not JSON');
   for (const desc of Object.values(Object.getOwnPropertyDescriptors(value))) {
     if (!('value' in desc) || !desc.enumerable) fail('JSON accessors and hidden properties are unsupported');

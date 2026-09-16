@@ -8,6 +8,9 @@ build/
 *.tsbuildinfo
 *.tgz
 
+# Generated receipt fixtures. tools/run_receipt_tests.py writes these.
+test-vectors/
+
 # Caches
 .turbo/
 __pycache__/

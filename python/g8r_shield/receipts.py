@@ -11,8 +11,9 @@ import json
 import re
 import secrets
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Mapping, NoReturn, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
@@ -68,13 +69,13 @@ def _text(value: Any, maximum: int = 256, *, empty: bool = False) -> str:
         _fail("Invalid Unicode")
     if size > maximum or (not empty and size == 0):
         _fail("Invalid string length")
-    return cast(str, value)
+    return value
 
 
 def _integer(value: Any, minimum: int, maximum: int) -> int:
     if type(value) is not int or not minimum <= value <= maximum:
         _fail("Invalid integer")
-    return cast(int, value)
+    return value
 
 
 def canonical_json(value: Any) -> bytes:
@@ -247,7 +248,7 @@ def build_receipt_request(
         "governanceHeaders": governance, "body": body,
     }
     validate_request(request)
-    return json.loads(canonical_json(request))
+    return _object(parse_json(canonical_json(request)))
 
 
 def request_hash(request: dict[str, Any]) -> str:
@@ -314,11 +315,11 @@ class VerifiedReceipt:
 
     @property
     def claims(self) -> dict[str, Any]:
-        return cast(dict[str, Any], json.loads(self._claims_json))
+        return _object(parse_json(self._claims_json))
 
     @property
     def decision(self) -> dict[str, Any]:
-        return cast(dict[str, Any], self.claims["decision"])
+        return _object(self.claims["decision"])
 
 
 class ReceiptVerifier:
@@ -411,8 +412,8 @@ class ReceiptVerifier:
                 or issued - current > self._skew or current - expires >= self._skew):
             _fail("Receipt is expired, not yet valid, or exceeds lifetime policy")
         validate_request(request)
-        for field in ("tenantId", "agentId", "requestId", "nonce"):
-            if claims[field] != request[field] or type(claims[field]) is not str:
+        for name in ("tenantId", "agentId", "requestId", "nonce"):
+            if claims[name] != request[name] or type(claims[name]) is not str:
                 _fail("Receipt request binding mismatch")
         digest = claims["requestHash"]
         if type(digest) is not str or not _HASH.fullmatch(digest):

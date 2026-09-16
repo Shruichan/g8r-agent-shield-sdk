@@ -14,10 +14,19 @@ import pytest
 
 adk = pytest.importorskip("google.adk", reason="ADK extra not installed")
 
+import responses  # noqa: E402
+
 from g8r_shield.adk import DENIAL_MARKER, ShieldPlugin  # noqa: E402
 from g8r_shield.shield import (  # noqa: E402
     PolicyDecision,
     ShieldConnectionError,
+)
+
+from .conftest import (  # noqa: E402
+    DECIDE_URL,
+    LOG_URL,
+    log_response,
+    pep_blocked_response,
 )
 
 
@@ -33,7 +42,11 @@ def _decision(kind: str = "allowed", **kw) -> PolicyDecision:
 
 
 class _FakeShield:
-    """Stands in for AgentShield: records what it was asked, returns a scripted verdict."""
+    """Stands in for AgentShield: records what it was asked, returns a scripted verdict.
+
+    Implements wrap()'s PEP hop (``_evaluate_pep``), not Console ``check()``.
+    A regression that still calls ``check()`` leaves ``checked`` empty.
+    """
 
     def __init__(self, result=None, raises: Exception | None = None):
         self._result = result if result is not None else _decision("allowed")
@@ -52,11 +65,14 @@ class _FakeShield:
 
         return contextlib.nullcontext()
 
-    def check(self, prompt, *, log=True):
+    def _evaluate_pep(self, prompt, request_id):
         self.checked.append(prompt)
         if self._raises:
             raise self._raises
         return self._result
+
+    def _log(self, prompt, decision, *, request_id=None):
+        return None
 
 
 class _Tool:
@@ -166,3 +182,30 @@ def test_gating_can_be_disabled():
     shield = _FakeShield(_decision("blocked"))
     assert _call(ShieldPlugin(shield, gate_tools=False), shield) is None
     assert shield.checked == [], "disabled gate must not call the policy engine at all"
+
+
+def test_plugin_uses_evaluate_pep_not_check():
+    """_FakeShield has no check(). A hop through Console /check leaves checked empty."""
+    shield = _FakeShield()
+    assert _call(ShieldPlugin(shield), shield) is None
+    assert shield.checked, "ShieldPlugin must call _evaluate_pep"
+
+
+@responses.activate
+def test_plugin_hops_pep_decide_not_console_check(shield):
+    """A real AgentShield hops wrap's PEP /decide, not Console /check.
+
+    wrap() would raise ShieldBlockedError here. The plugin needs the PolicyDecision
+    so it can return a denial dict and short-circuit the tool.
+    """
+    responses.add(responses.POST, DECIDE_URL, json=pep_blocked_response(), status=200)
+    responses.add(responses.POST, LOG_URL, json=log_response(), status=200)
+
+    out = _call(ShieldPlugin(shield), shield)
+
+    assert out is not None, "a PEP DENY must short-circuit the tool"
+    assert out["error"] == DENIAL_MARKER
+    assert out["status"] == "blocked"
+    assert responses.calls[0].request.url == DECIDE_URL
+    assert responses.calls[1].request.url == LOG_URL
+    assert all("/api/sdk/v1/check" not in (c.request.url or "") for c in responses.calls)

@@ -1,6 +1,6 @@
 {
   "name": "@g8r-security/agent-shield-sdk",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "TypeScript client for G8R Agent Shield — wrap LLM and agent calls with policy enforcement, local-first redaction, and audit logging.",
   "license": "Apache-2.0",
   "repository": {

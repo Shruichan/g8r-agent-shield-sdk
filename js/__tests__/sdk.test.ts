@@ -180,6 +180,16 @@ describe('AgentShield', () => {
       expect(result.decision).toBe('allowed');
     });
 
+    it('does not send x-gf-department on check() (Console /check uses JSON department)', async () => {
+      mockCheckOnly(allowedResponse);
+      await shield.check('What is the weather?', { log: false });
+      const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
+      expect(url).toBe('https://console.test.example/api/sdk/v1/check');
+      expect(init.headers['x-gf-department']).toBeUndefined();
+      const body = JSON.parse(init.body);
+      expect(body.department).toBe('Engineering');
+    });
+
     it('logs by default (POSTs to /log with the SAME requestId)', async () => {
       mockFetchSequence([
         { ok: true, body: allowedResponse },
@@ -358,6 +368,43 @@ describe('AgentShield', () => {
       expect((global.fetch as jest.Mock).mock.calls[1][0]).toBe(
         'https://console.test.example/api/sdk/v1/log'
       );
+    });
+
+    it('sends x-gf-department on wrap() PEP /decide equal to the constructed department', async () => {
+      mockFetchSequence([
+        { ok: true, body: allowedResponse },
+        { ok: true, body: { id: 'log-entry' } },
+      ]);
+      await shield.wrap(() => Promise.resolve('ok'), 'Safe query');
+      const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
+      expect(url).toBe('https://pep.test.example/decide');
+      expect(init.headers['x-gf-department']).toBe('Engineering');
+      expect(init.headers['X-GF-Tenant-ID']).toBe('acme-inc');
+      expect(init.headers['X-GF-Agent-ID']).toBe('test-agent');
+      expect(typeof init.headers['x-gf-session-id']).toBe('string');
+      // PEP Actor has no user header. x-gf-model-id is an upstream RESPONSE
+      // header. User and model stay on Console /log only.
+      expect(init.headers['x-gf-user-id']).toBeUndefined();
+      expect(init.headers['x-gf-model-id']).toBeUndefined();
+      expect((global.fetch as jest.Mock).mock.calls[1][0]).toBe(
+        'https://console.test.example/api/sdk/v1/log'
+      );
+    });
+
+    it('defaults wrap() PEP x-gf-department to General when department is omitted', async () => {
+      const minimalShield = new AgentShield({
+        pepUrl: 'https://pep.test.example',
+        consoleUrl: 'https://console.test.example',
+        apiKey: 'sk',
+        tenantId: tenantId('acme-inc'),
+      });
+      mockFetchSequence([
+        { ok: true, body: allowedResponse },
+        { ok: true, body: { id: 'log-entry' } },
+      ]);
+      await minimalShield.wrap(() => Promise.resolve('ok'), 'Safe query');
+      const headers = (global.fetch as jest.Mock).mock.calls[0][1].headers;
+      expect(headers['x-gf-department']).toBe('General');
     });
 
     it('does NOT invoke factory when policy blocks', async () => {

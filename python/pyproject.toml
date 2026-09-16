@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "g8r-shield"
-version = "0.5.2"
+version = "0.6.0"
 description = "G8R Agent Shield SDK — wrap LLM calls with enterprise policy enforcement, audit logging, and tenant isolation."
 readme = "README.md"
 license = "Apache-2.0"
